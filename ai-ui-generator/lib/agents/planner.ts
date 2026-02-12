@@ -1,112 +1,128 @@
 import { openrouter } from "@/lib/openrouter";
 import { allowedComponents } from "@/lib/componentRegistry";
-import { validateUINode } from "@/lib/validator";
-import { UINode } from "@/lib/types";
+import { Plan } from "@/lib/types/plan";
+import { getAllowedProps } from "@/lib/propSchemas";
 
+const MODELS = [
+  "openrouter/free",
+  "meta-llama/llama-3.2-3b-instruct:free",
+];
+
+const MAX_DEPTH = 5;
+
+/**
+ * Planner with model fallback robustness
+ */
 export async function planner(
   userIntent: string,
-  previousTree?: UINode | null
-): Promise<UINode> {
+  previousTree?: any
+): Promise<Plan> {
+  const mode = previousTree ? "modify" : "create";
 
-  const baseRules = `
-You are a deterministic UI planning engine.
+  const componentDetails = allowedComponents
+    .map((comp) => {
+      const props = getAllowedProps(comp as any);
+      const propDetails = props.map(prop => {
+        // Special handling for enum props
+        if (comp === "Button" && prop === "variant") {
+          return `${prop} ("primary"|"secondary")`;
+        }
+        return prop;
+      }).join(", ");
+      return `  - ${comp}: props = {${propDetails}}`;
+    })
+    .join("\n");
 
-CRITICAL:
-- Return ONLY valid JSON.
-- No markdown.
-- No explanation.
-- No backticks.
-- No comments.
-- No extra text.
-- Output must start with { and end with }.
+  const prompt = `
+You are a UI planning agent. Return ONLY valid JSON.
 
-STRICT SCHEMA:
+ALLOWED COMPONENTS:
+${componentDetails}
 
+SCHEMA:
 {
-  "type": "ComponentName",
-  "props": {},
-  "children": [ { same schema recursively } ]
+  "mode": "${mode}",
+  "intent": "${userIntent}",
+  "root": {
+    "type": "ComponentName",
+    "props": {},
+    "children": [],
+    "reasoning": "why this component"
+  },
+  "description": "what changed",
+  ${
+    mode === "modify"
+      ? `"changes": { "added": [], "removed": [], "modified": [] },`
+      : ""
+  }
+  "constraints": {
+    "allowedComponents": [...],
+    "maxDepth": ${MAX_DEPTH}
+  }
 }
 
-ALLOWED COMPONENTS: ${allowedComponents.join(", ")}
-
 RULES:
-- "type" MUST be one of the allowed components above ONLY.
-- "children" MUST ALWAYS be an array (even if empty []).
-- Children elements MUST be objects (never strings or primitives).
-- Always include "props" as an object (can be empty {}).
-- For Navbar: include meaningful title in props.
-- For Card: include title in props, Card children hold content.
-- For Chart: include title in props.
-- DO NOT wrap entire UI in Card unless explicitly requested.
-- DO NOT nest Navbar inside other components unless asked.
-- Modal should be a sibling to other components, NOT nested.
-- Preserve existing structure unless user explicitly requests change.
-- When modifying: make MINIMAL changes only.
-- NEVER invent new component types.
-- NEVER use HTML tags (div, span, button, etc).
-- NEVER return nested "props" with children inside props.
-`;
+- type must match allowed components
+- props must match component's allowed props
+- children is array of ComponentSpec (recursive)
+- reasoning explains why component was chosen
+- maxDepth prevents infinite nesting
+${mode === "modify" ? `- Preserve existing structure unless explicitly requested\n- Previous tree:\n${JSON.stringify(previousTree, null, 2)}` : ""}
 
-  const initPrompt = (intent: string) => `
-${baseRules}
+User Intent: ${userIntent}
 
-For this request:
-"${intent}"
+Return JSON only. No markdown.
+`.trim();
 
-GENERATE a new UI tree. Start with the most appropriate root component (likely Navbar for dashboards, or Button for forms).
-Directly output the JSON tree. No wrapping. No explanations.
-`;
+  let lastError: Error | null = null;
 
-  const modifyPrompt = (tree: UINode, intent: string) => `
-${baseRules}
+  // Try models with fallback
+  for (const model of MODELS) {
+    try {
+      console.log(`Attempting with model: ${model}`);
 
-Current UI tree:
-${JSON.stringify(tree, null, 2)}
+      const response = await openrouter.chat.completions.create({
+        model,
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content: "You ONLY output valid JSON. No markdown. No explanations.",
+          },
+          { role: "user", content: prompt },
+        ],
+      });
 
-Request: "${intent}"
+      const raw = response.choices[0].message.content || "";
+      console.log(`Model ${model} response length:`, raw.length);
 
-Update and return the full JSON tree tree. Make minimal changes. Preserve unmodified components.
-`;
+      if (!raw.trim()) {
+        throw new Error("Empty response from model");
+      }
 
-  const prompt = previousTree ? modifyPrompt(previousTree, userIntent) : initPrompt(userIntent);
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error("No valid JSON found in output");
+      }
 
+      const plan: Plan = JSON.parse(jsonMatch[0]);
 
-  try {
-    const response = await openrouter.chat.completions.create({
-      model: "openrouter/free",
-      temperature: 0,
-      messages: [
-        { 
-          role: "system", 
-          content: "You ONLY output valid JSON. No markdown, no explanations. Start with { and end with }." 
-        },
-        { role: "user", content: prompt }
-      ],
-    });
+      // Basic validation
+      if (!plan.root || !plan.root.type) {
+        throw new Error("Plan missing root component");
+      }
 
-    const raw = response.choices[0].message.content || "";
-    console.log("Raw model output:", raw.substring(0, 200));
-
-    // Extract first JSON object safely
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-      throw new Error("No valid JSON found in model output");
+      console.log(`✅ Model ${model} succeeded`);
+      return plan;
+    } catch (error: any) {
+      console.warn(`❌ Model ${model} failed:`, error.message);
+      lastError = error;
+      // Continue to next model
     }
-
-    const cleaned = jsonMatch[0];
-    const parsed = JSON.parse(cleaned);
-
-    if (!validateUINode(parsed)) {
-      throw new Error("Invalid UI structure from model: " + JSON.stringify(parsed));
-    }
-
-    return parsed;
-
-  } catch (error: any) {
-    console.error("Planner error:", error);
-    throw new Error("Planner failed: " + error.message);
   }
 
+  // All models failed
+  throw new Error(
+    `All models failed. Last error: ${lastError?.message || "Unknown"}`
+  );
 }
