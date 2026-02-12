@@ -1,7 +1,13 @@
 type Props = {
-  title: string;
+  title?: string;
+  children?: React.ReactNode;
 };
 
-export const Navbar = ({ title }: Props) => {
-  return <div className="navbar">{title}</div>;
+export const Navbar = ({ title = "Navbar", children }: Props) => {
+  return (
+    <div className="navbar">
+      {title}
+      {children}
+    </div>
+  );
 };
