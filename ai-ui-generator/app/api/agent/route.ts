@@ -118,13 +118,14 @@ export async function POST(req: Request) {
           const creditsUsed = getDailyCredits() - user.creditsRemaining;
           const isNewUser = createdKey === todayKey && creditsUsed < getDailyCredits();
 
-          const apiKeys = isNewUser
+          const apiKeys = (isNewUser
             ? [
                 process.env.OPENROUTER_API_KEY,
                 process.env.OPENROUTER_API_KEY_SECONDARY,
                 process.env.OPENROUTER_API_KEY_BACKUP,
-              ].filter(Boolean)
-            : [process.env.OPENROUTER_API_KEY].filter(Boolean);
+              ]
+            : [process.env.OPENROUTER_API_KEY]
+          ).filter(Boolean) as string[];
 
           if (isNewUser && apiKeys.length > 1) {
             addLog("Using fallback API keys for new-user quota.");
