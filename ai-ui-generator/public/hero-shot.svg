@@ -1,0 +1,19 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="720" rx="24" fill="#0f172a"/>
+  <rect x="48" y="48" width="1104" height="624" rx="20" fill="#111827" stroke="#334155" stroke-width="2"/>
+  <rect x="96" y="120" width="360" height="40" rx="8" fill="#1f2937"/>
+  <rect x="96" y="180" width="520" height="16" rx="8" fill="#1e293b"/>
+  <rect x="96" y="210" width="420" height="16" rx="8" fill="#1e293b"/>
+  <rect x="96" y="240" width="460" height="16" rx="8" fill="#1e293b"/>
+  <rect x="96" y="320" width="1008" height="280" rx="16" fill="#0b1220" stroke="#1f2937" stroke-width="2"/>
+  <rect x="128" y="352" width="260" height="200" rx="12" fill="#111827" stroke="#1f2937" stroke-width="2"/>
+  <rect x="416" y="352" width="260" height="200" rx="12" fill="#111827" stroke="#1f2937" stroke-width="2"/>
+  <rect x="704" y="352" width="360" height="200" rx="12" fill="#111827" stroke="#1f2937" stroke-width="2"/>
+  <rect x="128" y="584" width="260" height="16" rx="8" fill="#1e293b"/>
+  <rect x="416" y="584" width="260" height="16" rx="8" fill="#1e293b"/>
+  <rect x="704" y="584" width="360" height="16" rx="8" fill="#1e293b"/>
+  <circle cx="120" cy="88" r="8" fill="#ef4444"/>
+  <circle cx="148" cy="88" r="8" fill="#f59e0b"/>
+  <circle cx="176" cy="88" r="8" fill="#10b981"/>
+  <text x="96" y="96" fill="#94a3b8" font-family="Arial, sans-serif" font-size="14">PromptPilot Preview</text>
+</svg>

@@ -1,4 +1,4 @@
-import { openrouter } from "@/lib/openrouter";
+import { createOpenRouterClient, openrouter } from "@/lib/openrouter";
 import { allowedComponents } from "@/lib/componentRegistry";
 import { Plan } from "@/lib/types/plan";
 import { getAllowedProps } from "@/lib/propSchemas";
@@ -15,7 +15,9 @@ const MAX_DEPTH = 5;
  */
 export async function planner(
   userIntent: string,
-  previousTree?: any
+  previousTree?: any,
+  onLog?: (message: string) => void,
+  apiKeys?: string[]
 ): Promise<Plan> {
   const mode = previousTree ? "modify" : "create";
 
@@ -76,48 +78,65 @@ Return JSON only. No markdown.
 
   let lastError: Error | null = null;
 
+  const emitLog = onLog ?? ((message: string) => console.log(message));
+  const keys = apiKeys && apiKeys.length > 0 ? apiKeys : [""];
+
   // Try models with fallback
   for (const model of MODELS) {
-    try {
-      console.log(`Attempting with model: ${model}`);
+    emitLog(`Attempting with model: ${model}`);
 
-      const response = await openrouter.chat.completions.create({
-        model,
-        temperature: 0,
-        messages: [
-          {
-            role: "system",
-            content: "You ONLY output valid JSON. No markdown. No explanations.",
-          },
-          { role: "user", content: prompt },
-        ],
-      });
+    for (const apiKey of keys) {
+      try {
+        const client = apiKey ? createOpenRouterClient(apiKey) : openrouter;
 
-      const raw = response.choices[0].message.content || "";
-      console.log(`Model ${model} response length:`, raw.length);
+        const response = await client.chat.completions.create({
+          model,
+          temperature: 0,
+          messages: [
+            {
+              role: "system",
+              content: "You ONLY output valid JSON. No markdown. No explanations.",
+            },
+            { role: "user", content: prompt },
+          ],
+        });
 
-      if (!raw.trim()) {
-        throw new Error("Empty response from model");
+        const raw = response.choices[0].message.content || "";
+        emitLog(`Model ${model} response length: ${raw.length}`);
+
+        if (!raw.trim()) {
+          throw new Error("Empty response from model");
+        }
+
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error("No valid JSON found in output");
+        }
+
+        const plan: Plan = JSON.parse(jsonMatch[0]);
+
+        // Basic validation
+        if (!plan.root || !plan.root.type) {
+          throw new Error("Plan missing root component");
+        }
+
+        emitLog(`✅ Model ${model} succeeded`);
+        return plan;
+      } catch (error: any) {
+        const status = error?.status ?? error?.response?.status;
+        const message = error?.message || "Unknown error";
+        const isRateLimit = status === 429 || /429|rate limit/i.test(message);
+
+        emitLog(`❌ Model ${model} failed: ${message}`);
+        lastError = error;
+
+        if (isRateLimit && keys.length > 1) {
+          emitLog("⚠️ Rate limited. Trying fallback key...");
+          continue;
+        }
+
+        break;
       }
-
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error("No valid JSON found in output");
-      }
-
-      const plan: Plan = JSON.parse(jsonMatch[0]);
-
-      // Basic validation
-      if (!plan.root || !plan.root.type) {
-        throw new Error("Plan missing root component");
-      }
-
-      console.log(`✅ Model ${model} succeeded`);
-      return plan;
-    } catch (error: any) {
-      console.warn(`❌ Model ${model} failed:`, error.message);
-      lastError = error;
-      // Continue to next model
     }
   }
 

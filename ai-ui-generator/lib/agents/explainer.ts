@@ -7,7 +7,7 @@
  * @module agents/explainer
  */
 
-import { openrouter } from "@/lib/openrouter";
+import { createOpenRouterClient, openrouter } from "@/lib/openrouter";
 import { UINode } from "@/lib/types";
 
 const MODELS = [
@@ -33,7 +33,11 @@ const MODELS = [
  * // Output: "The Navbar provides top-level navigation..."
  * ```
  */
-export async function explainer(plan: UINode): Promise<string> {
+export async function explainer(
+  plan: UINode,
+  onLog?: (message: string) => void,
+  apiKeys?: string[]
+): Promise<string> {
   const prompt = `
 You are an AI UI explainer.
 
@@ -51,43 +55,60 @@ ${JSON.stringify(plan, null, 2)}
 
   let lastError: Error | null = null;
 
+  const emitLog = onLog ?? ((message: string) => console.log(message));
+  const keys = apiKeys && apiKeys.length > 0 ? apiKeys : [""];
+
   // Try models with fallback
   for (const model of MODELS) {
-    try {
-      console.log(`[Explainer] Attempting with model: ${model}`);
+    emitLog(`[Explainer] Attempting with model: ${model}`);
 
-      const response = await openrouter.chat.completions.create({
-        model,
-        temperature: 0.2, // Low temperature for consistent explanations
-        messages: [
-          {
-            role: "system",
-            content: "You explain UI decisions clearly."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-      });
+    for (const apiKey of keys) {
+      try {
+        const client = apiKey ? createOpenRouterClient(apiKey) : openrouter;
 
-      const explanation = response.choices[0].message.content || "";
-      
-      if (!explanation.trim()) {
-        throw new Error("Empty explanation from model");
+        const response = await client.chat.completions.create({
+          model,
+          temperature: 0.2, // Low temperature for consistent explanations
+          messages: [
+            {
+              role: "system",
+              content: "You explain UI decisions clearly."
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+        });
+
+        const explanation = response.choices[0].message.content || "";
+        
+        if (!explanation.trim()) {
+          throw new Error("Empty explanation from model");
+        }
+
+        emitLog(`[Explainer] ✅ Model ${model} succeeded`);
+        return explanation;
+
+      } catch (error: any) {
+        const status = error?.status ?? error?.response?.status;
+        const message = error?.message || "Unknown error";
+        const isRateLimit = status === 429 || /429|rate limit/i.test(message);
+
+        emitLog(`[Explainer] ❌ Model ${model} failed: ${message}`);
+        lastError = error;
+
+        if (isRateLimit && keys.length > 1) {
+          emitLog("[Explainer] ⚠️ Rate limited. Trying fallback key...");
+          continue;
+        }
+
+        break;
       }
-
-      console.log(`[Explainer] ✅ Model ${model} succeeded`);
-      return explanation;
-
-    } catch (error: any) {
-      console.warn(`[Explainer] ❌ Model ${model} failed:`, error.message);
-      lastError = error;
-      // Continue to next model
     }
   }
 
   // All models failed - return fallback explanation
-  console.warn("[Explainer] All models failed, using fallback");
+  emitLog("[Explainer] All models failed, using fallback");
   return `This UI structure was generated based on your request. It includes ${plan.type} as the root component${plan.children && plan.children.length > 0 ? ` with ${plan.children.length} child component(s)` : ""}.`;
 }
